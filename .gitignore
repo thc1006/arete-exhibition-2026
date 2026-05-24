@@ -1,0 +1,20 @@
+# Working intermediates — kept locally for reproduction but not pushed.
+# The README documents how each was produced.
+_intermediate/*
+
+# But DO ship the actual scripts used so the pipeline is reproducible:
+!_intermediate/scripts/
+!_intermediate/scripts/**
+
+# Real-ESRGAN binary is downloadable per README — don't ship the 45 MB zip + 32 MB model.
+_intermediate/tools/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+__pycache__/
+*.pyc

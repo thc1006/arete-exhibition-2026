@@ -1,58 +1,89 @@
 # arete-exhibition-2026
 
-A reproducible pipeline for converting raster logos (JPEG) into clean transparent **PNG** (2K / 4K / 8K) and editable **SVG** vectors. Built around an RTX 5090 (Vulkan) and CPU-only vector tooling, so it runs end-to-end in seconds per logo.
+Reproducible image pipeline that prepares the official logos used in the 2026 **arete** exhibition — turning raster sources (JPEG screenshots, scanned stamps) into clean **transparent PNG** at 2K / 4K / 8K and editable **SVG** vectors.
 
-## TL;DR
+Two organizations are featured:
 
-| Step | Tool | Why |
-|------|------|-----|
-| 1. Source analysis | OpenCV | Auto-detect background color + sharpness; decide whether AI upscale is needed |
-| 2. AI super-resolution (optional) | Real-ESRGAN `x4plus-anime` via NCNN-Vulkan | Cleans JPEG artifacts, sharpens edges. **Skip for clean digital sources** — it can hallucinate detail |
-| 3. Color-distance alpha matte | NumPy | Per-pixel `α = ‖p − bg‖ / ‖fg − bg‖` keeps anti-aliasing; far better than hard threshold |
-| 4. Refinement (per content) | OpenCV (sigmoid + Gaussian + morphology) | Suppress speckle noise without distorting letterforms |
-| 5. Vectorization | potrace 1.16 | Smooth curve fitting; tune `--turdsize`, `--alphamax`, `--opttolerance` per logo |
-| 6. Render at scale | Inkscape 1.2 CLI | Lossless raster output at any resolution from SVG |
+| Folder | Organization | Source character |
+|--------|--------------|------------------|
+| [`01_paichuan_bachelor/`](01_paichuan_bachelor/) | **百川學士學位學程** (NYCU Paichuan Bachelor Degree Program) | High-resolution white emblem on navy — solid two-tone, JPEG ringing on gear teeth |
+| [`02_nctu_alumni/`](02_nctu_alumni/) | **交大校友會** (NCTU Alumni Association, "ESA · SINCE 1896") | Photographed/scanned blue stamp on white paper — print noise, contains the year **1896** that must not be distorted |
 
-Deliverables per logo: 2 SVG variants (light/dark fill) × 6 PNG raster files (2K/4K/8K, padded + tightly cropped) × 2–3 color variants. Plus one AI-upscaled raster master as a fallback.
+Built end-to-end around an RTX 5090 (Vulkan), but the vector stage is CPU-only. Each logo finishes in seconds.
 
-## Final structure
+## TL;DR — what the pipeline does
+
+| # | Stage | Tool | Why |
+|---|-------|------|-----|
+| 1 | Source analysis | OpenCV | Auto-detect background color + sharpness; decide whether AI upscale is needed |
+| 2 | AI super-resolution (when needed) | Real-ESRGAN `x4plus-anime` via NCNN-Vulkan | Cleans JPEG/scan artifacts and sharpens edges. **Skip when source is already clean digital art** — AI can hallucinate detail |
+| 3 | Color-distance alpha matte | NumPy | Per-pixel α = ‖p − bg‖ / ‖fg − bg‖ keeps anti-aliasing; far better than a hard threshold |
+| 4 | Refinement (per content) | OpenCV (sigmoid + Gaussian + morphology) | Suppress speckle without distorting letterforms |
+| 5 | Vectorization | potrace 1.16 | Smooth curve fitting; tune `--turdsize`, `--alphamax`, `--opttolerance` per logo |
+| 6 | Scale-out rendering | Inkscape 1.2 CLI | Lossless raster output at any target size from the SVG |
+
+Per-logo deliverables: 2–4 SVG variants (white / black / brand color) × 2K · 4K · 8K PNG (padded and tightly cropped) + one AI-upscaled raster master as a safety net.
+
+## Repository layout
 
 ```
 .
-├── 01_emblem_wreath/         white emblem on navy (source had clean color blocks)
-├── 02_esa_alumni/            scanned blue stamp print (noisy, contains text "1896")
-├── 03_excel_biomedical/      digital biotech logo (Chinese + English text, dots)
-└── _intermediate/            scripts, masks, ESRGAN binary, working files
+├── 01_paichuan_bachelor/        百川學士學位學程
+│   ├── source/                  original JPEG
+│   ├── svg/
+│   │   ├── paichuan_white.svg   ← primary (matches source — white logo)
+│   │   └── paichuan_black.svg   ← recolored for editing / dark-on-light placement
+│   └── png/
+│       ├── 2K.png · 4K.png · 8K.png                  white fill on transparent (square)
+│       ├── 2K_cropped.png · 4K_cropped.png · 8K_cropped.png   tight crop
+│       └── 4K_black.png · 8K_black.png · ...         black variants
+│
+├── 02_nctu_alumni/              交大校友會 (ESA SINCE 1896 ALUMNI)
+│   ├── source/                  original JPEG
+│   ├── svg/
+│   │   ├── nctu_alumni_blue.svg      ← primary (refined, brand blue #040B79)
+│   │   ├── nctu_alumni_white.svg     ← for dark backgrounds
+│   │   ├── nctu_alumni_black.svg     ← for editing / dark-on-light placement
+│   │   └── nctu_alumni_authentic.svg ← preserves original print-edge texture
+│   └── png/
+│       ├── 2K.png · 4K.png · 8K.png                  blue fill (default)
+│       ├── 2K_white.png · ... · 8K_white_cropped.png  white variants
+│       ├── 2K_black.png · ... · 8K_black.png         black variants
+│       └── _alt_8K_AI_raster.png                     AI-upscaled raster master
+│
+└── _intermediate/               working files, scripts, ESRGAN binary
+    ├── scripts/                 the Python scripts that actually ran
+    ├── paichuan_files/          intermediate outputs for logo 1
+    ├── nctu_alumni_files/       intermediate outputs for logo 2
+    ├── renders/                 verification crops and previews
+    └── tools/                   Real-ESRGAN NCNN-Vulkan binary
 ```
 
-Each logo folder is structured identically:
+**Picking a file** — the safest pairing for most uses:
 
-```
-0X_<name>/
-├── source/  <original.jpg>
-├── svg/     <name>_white.svg, <name>_black.svg, [<name>_brand.svg]
-└── png/     2K.png · 4K.png · 8K.png · *_cropped.png · *_white.png · *_black.png
-```
+- Web / print on light background: `*_blue.svg` (NCTU) or `*_white.svg` rendered onto your own background (Paichuan).
+- Web / print on dark background: `*_white.svg`.
+- Re-coloring or further editing: `*_black.svg`.
+- Highest-quality raster: `8K_cropped.png`.
 
-## Pipeline
+## Pipeline detail
 
 ### 1. Decide whether to AI-upscale
 
 ```python
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
-H, W = gray.shape
 ```
 
 Rules of thumb actually used:
 
-- **AI upscale when**: source < 1500 px on the long side, OR sharpness < 1500 (JPEG-compressed / scanned).
-- **Skip AI when**: source is already large + clean digital with hard edges (Laplacian variance > 2000).
-- Always verify text/digits after AI upscale by cropping and reading them back. Hallucination is the only real risk.
+- **Upscale when** the source is < 1500 px on the long side, **or** sharpness < 1500 (JPEG-compressed / scanned).
+- **Skip when** the source is already large and crisp (Laplacian variance > 2000) — AI risks hallucinating where there is no real detail to recover.
+- After upscaling, **always read back the text/digits**. For the NCTU stamp, the "1896" was visually compared between AI-4× and bicubic-4× crops before committing to the AI path.
 
-### 2. AI super-resolution (when needed)
+### 2. AI super-resolution
 
-Real-ESRGAN's NCNN-Vulkan binary runs on the RTX 5090 without PyTorch, so there is **no CUDA/driver coupling**:
+The portable NCNN-Vulkan binary runs directly on the RTX 5090 — no PyTorch, no `basicsr`, no Python 3.13 wheel headaches:
 
 ```bash
 ./realesrgan-ncnn-vulkan \
@@ -60,51 +91,53 @@ Real-ESRGAN's NCNN-Vulkan binary runs on the RTX 5090 without PyTorch, so there 
   -n realesrgan-x4plus-anime -s 4 -f png
 ```
 
-`x4plus-anime` (not the photo model) is the right pick for logos, line art, and stamped prints — it preserves hard edges and treats flat regions as flat. The PyTorch path is avoided because `basicsr`/`spandrel` have Python 3.13 wheel issues at the time of writing.
+The **anime** model (not the photo one) is the right choice for logos, line art, and stamped prints: it preserves hard edges and treats flat regions as flat.
 
 ### 3. Color-distance alpha matte
 
-A hard threshold throws away anti-aliasing and produces jagged edges. Use a soft matte instead:
+A hard threshold throws away anti-aliasing and produces jagged edges. The matte we use:
 
 ```python
-d_bg = np.linalg.norm(pix - bg_color, axis=2)
-alpha = np.clip(d_bg / np.linalg.norm(fg_color - bg_color), 0, 1)
+d_bg  = np.linalg.norm(pix - bg_color, axis=2)
+max_d = np.linalg.norm(fg_color - bg_color)
+alpha = np.clip(d_bg / max_d, 0, 1)
 ```
 
-For two-color sources this gives near-perfect edges. Choose the output RGB as either:
+Output RGB choice:
 
-- **Uniform `fg_color`** (recommended for monochrome ink/stamp logos): removes paper texture and color drift.
-- **Original `img` RGB**: preserves authentic appearance, including ink variation.
+- **Uniform `fg_color`** — recommended for the NCTU stamp; removes paper texture and ink-density drift.
+- **Original `img` RGB** — preserves the authentic stamped appearance (`nctu_alumni_authentic.svg` is built from this).
 
 ### 4. Refinement (per content type)
 
 | Source type | Refinement |
 |-------------|------------|
-| Clean digital (Excel) | Sigmoid `k=10, x₀=0.20` only |
-| Scanned print (ESA) | Sigmoid `k=14, x₀=0.30` + Gaussian σ=4 + `MORPH_CLOSE 3×3` |
-| Solid color blocks (emblem) | Sigmoid is enough; no morphology |
+| Two-tone JPEG (Paichuan) | Sigmoid only, no morphology |
+| Scanned stamp (NCTU Alumni) | Sigmoid `k=14, x₀=0.30` → Gaussian σ=4 → `MORPH_CLOSE 3×3` |
 
-A sigmoid (`α' = 1 / (1 + exp(-k(α − x₀)))`) is strictly better than `np.where(α > t, 1, 0)` because it preserves sub-pixel edges while still suppressing low-confidence noise.
+The sigmoid `α' = 1 / (1 + exp(−k(α − x₀)))` is strictly better than `np.where(α > t, 1, 0)`: it preserves sub-pixel edge transitions while still pushing low-confidence pixels to 0.
 
 ### 5. Vectorization
 
-`potrace` outperforms `vtracer` for binary single-color content — it produces ~5× smaller files with smoother curves. Convert to PGM first, then trace:
+`potrace` outperforms `vtracer` for binary single-color content — roughly 5× smaller SVG with visibly smoother curves. Convert to PGM first, then trace:
 
 ```bash
 potrace mask.pgm -s -o out.svg \
-  --turdsize 2 --alphamax 0.8 --opttolerance 0.2
+  --turdsize 4 --alphamax 1.0 --opttolerance 0.2
 ```
 
-Tuning matters per content:
+Per-logo tuning that actually mattered:
 
-- `--turdsize` = minimum feature area (pixels). Lower it to **2** when small features like dots or thin strokes matter. Default `2` is correct for the Excel logo; raise to `4`–`8` for noisy scans.
-- `--alphamax` controls corner detection. `0.8` keeps geometric/sans-serif text sharp; `1.0` allows more rounding for organic shapes.
-- `--opttolerance` controls path simplification. `0.1`–`0.2` is the sweet spot.
+| Logo | turdsize | alphamax | opttolerance | Reason |
+|------|----------|----------|--------------|--------|
+| Paichuan | 4 | 1.0 | 0.2 | Large, clean shapes — defaults are fine |
+| NCTU Alumni | 4 | 1.0 | 0.2 | After Gaussian σ=4 refinement, defaults are again the sweet spot |
 
-Recolor by simple `sed` on the resulting SVG:
+Recolor in one line — no need to re-trace:
 
 ```bash
 sed 's/fill="#000000"/fill="#ffffff"/g' out.svg > out_white.svg
+sed 's/fill="#000000"/fill="#040B79"/g' out.svg > out_blue.svg
 ```
 
 ### 6. Render at any scale
@@ -116,63 +149,66 @@ inkscape logo.svg --export-type=png \
   --export-background-opacity=0
 ```
 
-Then crop to content for tighter files:
+Then crop to content for the tight-fit variant:
 
 ```python
-ys, xs = np.where(img[:,:,3] > 4)
+ys, xs = np.where(img[:, :, 3] > 4)
 pad = max(8, (ys.max() - ys.min()) // 50)
-crop = img[ys.min()-pad:ys.max()+pad, xs.min()-pad:xs.max()+pad]
+crop = img[ys.min() - pad : ys.max() + pad,
+           xs.min() - pad : xs.max() + pad]
 ```
 
 ## Per-logo notes
 
-### 01 — emblem wreath
-- Source: 2005×2005, white emblem on navy. Detected `bg = RGB(25, 46, 91)`.
-- AI 4× chosen because the source JPEG had visible ringing on the gear teeth.
-- Vectorized at 8K → potrace 82 KB SVG.
+### 01 — 百川學士學位學程 (Paichuan Bachelor Program)
+- **Source:** 2005 × 2005, white emblem on navy. Detected `bg = RGB(25, 46, 91)`.
+- AI 4× was used because the source JPEG had visible ringing along the gear teeth and the wreath leaves.
+- Final SVG ≈ 82 KB. The "white on transparent" is the primary because the original design is white — no recoloring needed for fidelity.
 
-### 02 — ESA Alumni (the hard one)
-- Source: 2048×1699, scanned blue stamp print on white.
-- Ink color `RGB(4, 11, 121)`; bg `RGB(254, 254, 254)`.
-- **Text preservation** was the constraint — "1896" verified by visual comparison of AI vs bicubic 4× crops before committing to AI. The AI version did not distort digits.
-- Three SVG variants saved because the user can pick the trade-off:
-  - `_blue.svg` — refined, smoothed edges (clean modern look)
-  - `_authentic.svg` — preserves original print-edge texture (faithful to the stamp)
-  - `_black.svg` / `_white.svg` — single-color reposes
+### 02 — 交大校友會 (NCTU Alumni Association)
+- **Source:** 2048 × 1699, scanned blue stamp print on white paper.
+- Ink `RGB(4, 11, 121)`; background `RGB(254, 254, 254)`.
+- **Text/year preservation** drove every decision. "1896", "ESA", "SINCE", "ALUMNI" were all visually verified after AI upscaling.
+- Four SVG variants are shipped because they serve different needs:
+  - `_blue.svg` — refined edges, brand blue; the canonical asset.
+  - `_white.svg` — for dark backgrounds.
+  - `_black.svg` — editable starting point.
+  - `_authentic.svg` — preserves the print-edge texture for "old stamp" presentations.
 
-### 03 — Excel Biomedical
-- Source: only 591×591, 27 KB heavily compressed. Bimodal histogram (clean two-color).
-- AI 4× → 2364×2364. Verified that all four Chinese characters (`昶安生技`) and **three dots** in the icon survived.
-- `--turdsize 2` was chosen specifically so the dots are not eaten.
-- SVG ~14 KB — by far the smallest, because the source was already two-tone.
+## Tools and versions
 
-## Tools and versions used
+- **Real-ESRGAN NCNN-Vulkan** `v0.2.5.0` — portable binary, no Python dep
+- **potrace** `1.16`
+- **Inkscape** `1.2.2`
+- **Python 3.13** + `opencv-python`, `numpy`, `Pillow`
+- **PyTorch** `2.9.1+cu128` (only used when GPU tensor ops were convenient; the heavy GPU work runs through NCNN-Vulkan)
 
-- Real-ESRGAN NCNN-Vulkan `v0.2.5.0` (portable binary, no Python dep)
-- potrace `1.16`
-- Inkscape `1.2.2`
-- Python 3.13 + `opencv-python`, `numpy`, `Pillow`, `vtracer` (compared, rejected for binary content)
-- PyTorch `2.9.1+cu128` (only used when the GPU is needed for tensor ops; otherwise NCNN-Vulkan does the GPU work)
-
-## Reproducing on a different machine
+## Reproducing the pipeline
 
 ```bash
-# 1. Install CLI tooling
+# 1. CLI tooling
 sudo apt-get install -y potrace inkscape
 pip install opencv-python numpy Pillow
 
-# 2. Download portable Real-ESRGAN (no Python required)
+# 2. Portable Real-ESRGAN — no Python required
 wget https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip
 unzip realesrgan-ncnn-vulkan-20220424-ubuntu.zip -d realesrgan
 chmod +x realesrgan/realesrgan-ncnn-vulkan
 
-# 3. Run a pipeline (see _intermediate/scripts/ for the actual scripts used)
+# 3. The actual scripts that ran are in _intermediate/scripts/
+ls _intermediate/scripts/
 ```
 
 ## Decisions worth flagging
 
-1. **NCNN-Vulkan over PyTorch Real-ESRGAN** — avoids the `basicsr`/Python-3.13 wheel mess and removes the CUDA/driver coupling. Vulkan works on the 5090 immediately.
-2. **potrace over vtracer** for binary content — 5× smaller SVG, visibly smoother curves. vtracer wins for multi-color rasters, not for this.
-3. **Sigmoid alpha, not threshold** — the difference is visible at 8K, especially on small text and gear teeth.
-4. **Multiple SVG color variants per logo** — recoloring SVG is a one-line `sed`, so shipping both fills is essentially free and saves the consumer from doing it themselves.
-5. **Cropped + padded PNG pairs** — designers want both: a square for placement grids, a tight crop for embedding.
+1. **NCNN-Vulkan over PyTorch Real-ESRGAN.** Avoids the `basicsr` / Python 3.13 wheel mess and removes any CUDA-driver coupling. Vulkan works on the 5090 immediately.
+2. **potrace over vtracer for binary content.** Roughly 5× smaller SVG and visibly smoother curves. vtracer wins for full-color rasters, not for this.
+3. **Sigmoid α, not threshold.** The difference is visible at 8K — especially around small text and gear teeth.
+4. **Multiple SVG color variants per logo.** Recoloring SVG is a one-line `sed`, so shipping all useful fills is essentially free and saves the consumer from re-doing the work.
+5. **Padded square + tightly cropped PNG pairs.** Designers want both: a square for placement grids, a tight crop for embedding inline.
+
+## License & attribution
+
+This repository ships the **processing pipeline and intermediate artifacts** used to prepare logos for the 2026 arete exhibition.
+
+The two logos themselves remain the intellectual property of their respective owners — 百川學士學位學程 (NYCU Paichuan Bachelor Degree Program) and 交大校友會 (NCTU Alumni Association). They are reproduced here strictly for the exhibition's authorized use; please contact the respective organization before any other use.
